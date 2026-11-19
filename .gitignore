@@ -1,0 +1,33 @@
+# Local application state. Keep these on the user's computer.
+**/data/
+**/work/
+**/builds/
+**/node_modules/
+**/runtimes/
+**/dist/
+**/out/
+**/coverage/
+**/.cache/
+**/__pycache__/
+*.log
+*.jsonl
+*.pyc
+
+# Credentials and personal machine settings.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+.npmrc
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Archives and installers can be downloaded again by the setup script.
+*.zip
+*.tgz
+*.exe
+*.msi

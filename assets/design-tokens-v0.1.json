@@ -1,0 +1,23 @@
+{
+  "version": "0.1",
+  "colors": {
+    "background": "#FFF8EE",
+    "surface": "#FFFFFF",
+    "text": "#493B36",
+    "textMuted": "#75645C",
+    "primary": "#F2B880",
+    "primaryHover": "#EAA86C",
+    "sage": "#DDE8D8",
+    "lilac": "#E8E0F2",
+    "border": "#D8C9BA",
+    "focus": "#795548"
+  },
+  "radius": {
+    "card": 24,
+    "button": 16
+  },
+  "spacingUnit": 8,
+  "bodyFontSize": 16,
+  "bodyLineHeight": 1.6,
+  "motionMs": 200
+}

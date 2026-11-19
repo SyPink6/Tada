@@ -1,0 +1,10 @@
+import{spawn}from'node:child_process';
+import{fileURLToPath}from'node:url';
+import path from'node:path';
+import{buildApp}from'../scripts/build.mjs';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
+const folder=await buildApp();
+const {ELECTRON_RUN_AS_NODE:ignored,...inherited}=process.env;
+const child=spawn(path.join(root,'runtimes/electron-45.3.4/electron.exe'),[path.join(root,'work/topmost-review-01')],{env:{...inherited,TADA_BUILD:folder,TADA_SMOKE:'1'},stdio:'inherit',windowsHide:true});
+child.on('error',e=>{console.error(e);process.exitCode=1;});
+child.on('exit',code=>{process.exitCode=code||0;});

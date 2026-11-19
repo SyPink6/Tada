@@ -1,0 +1,17 @@
+{
+  "name": "tada-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "An unobtrusive companion for one small step at a time",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/preview.mjs",
+    "desktop": "node scripts/desktop.mjs",
+    "test": "node --test tests/model.test.mjs"
+  },
+  "dependencies": {"react": "19.3.1", "react-dom": "19.3.1", "scheduler": "0.28.0"},
+  "devDependencies": {"esbuild": "0.28.2", "electron": "45.3.4", "playwright-core": "1.65.1"}
+}
