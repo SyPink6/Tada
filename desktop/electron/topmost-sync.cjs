@@ -1,4 +1,4 @@
-// Keep both native windows in the same topmost band, including hide/restore.
+// Keep the preference-driven task panel in the requested topmost band on hide/restore. The mascot is pinned independently.
 // Existing application sources and user snapshots are preserved.
 exports.install = ({app,getWindows,getPreference}) => {
   let ready=false, applying=false, desired=false, pending=null;
@@ -7,17 +7,16 @@ exports.install = ({app,getWindows,getPreference}) => {
     if(applying||!ready)return;
     applying=true;
     try {
-      const [pet,panel]=getWindows();
-      for(const win of [pet,panel])if(win&&!win.isDestroyed())originals.get(win)(desired,'floating');
+      const windows=getWindows().filter(w=>w&&!w.isDestroyed());
       // Raising an inactive companion must not take keyboard focus.
-      if(desired&&pet&&!pet.isDestroyed()&&pet.isVisible())pet.moveTop();
-      if(desired&&panel&&!panel.isDestroyed()&&panel.isVisible())panel.moveTop();
+      for(const win of windows)originals.get(win)?.(desired,'floating');
+      if(desired)for(const win of windows)if(win.isVisible())win.moveTop();
     }finally{applying=false;}
   }
   function schedule(){if(applying||pending)return;pending=setTimeout(()=>{pending=null;apply();},0);}
   function attach() {
-    const windows=getWindows();
-    if(windows.length!==2||windows.some(w=>!w||w.isDestroyed()))return false;
+    const windows=getWindows().filter(w=>w&&!w.isDestroyed());
+    if(windows.length===0)return false;
     desired=Boolean(getPreference());
     for(const win of windows){
       originals.set(win,win.setAlwaysOnTop.bind(win));

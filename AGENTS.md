@@ -1,17 +1,11 @@
 # Tada 项目协作约定
 
-## 永久不删除约束
-
-- 保留所有现有文件、目录、日志、缓存、任务记录、分支、环境及远程资源。
-- 不执行删除、清理、清空、裁剪、卸载、破坏性重置或会隐式丢弃既有内容的操作。
-- 每次调用工具前，检查是否可能删除、丢弃、截断或不可逆替换既有数据；如会发生，不执行。
-- 若任务确实要求删除，先请用户明确修改这一约束，不能从普通任务指令推断例外。
-- 通过新增版本、追加记录等方式保留历史；不强制推送、不删除分支。
-
 ## 开发入口
 
-- 当前应用在 `desktop/`；`desktop-v0.1/` 保留早期草稿，不能据此替代当前实现。
+- 当前应用在 `desktop/`；`desktop-v0.1/` 已删除（早期草稿）。
+- 架构是双服务：Python 后端（FastAPI, 8080）+ Node 前端代理（4174）。
 - 首次安装与跨电脑步骤见 `DEVELOPMENT.md`；使用 `node scripts/setup-portable.mjs`。
-- Electron + React 展示版，尚未接入真实 AI。产品定位见 `docs/`。
+- Electron + React + Python(FastAPI) 混合架构，已接入真实 AI（maragate）。
+- 数据库用 MySQL，向量库用 Chroma（嵌入式）。
 - 本机任务与运行数据不上传。遵守 `.gitignore`，不要提交 `data/`、`work/`、依赖和运行时目录。
 - 改动后运行相关检查；窗口置顶回归使用 `node tests/run-topmost-portable.mjs`。

@@ -4,18 +4,20 @@ const assert=require('node:assert/strict');
 module.exports=async({app,pet,panel,root,stamp})=>{
  const tick=()=>new Promise(r=>setTimeout(r,120));
  const report=[];
- function check(label,pin){assert.equal(pet.isAlwaysOnTop(),pin,label+' pet');assert.equal(panel.isAlwaysOnTop(),pin,label+' panel');report.push(label);}
+ // Contract: the mascot (pet) is always pinned on top; only the task panel follows the onTop preference.
+ function check(label,panelPin){assert.equal(pet.isAlwaysOnTop(),true,label+' pet stays pinned');assert.equal(panel.isAlwaysOnTop(),panelPin,label+' panel');report.push(label);}
  await tick();
- pet.setAlwaysOnTop(true);check('pin from pet applies to both',true);
- panel.show();await tick();check('opening panel keeps pet pinned',true);
- panel.hide();await tick();check('collapsed companion stays pinned',true);
- const before=panel.isFocused();pet.showInactive();await tick();check('inactive show keeps pin',true);assert.equal(panel.isFocused(),before);
- panel.setAlwaysOnTop(false);check('unpin from panel applies to both',false);
- pet.hide();pet.showInactive();await tick();check('unpin survives hide and show',false);
- panel.setAlwaysOnTop(true);pet.hide();panel.hide();pet.showInactive();panel.show();await tick();check('pin survives tray-style restore',true);
+ check('default: mascot pinned, panel unpinned',false);
+ panel.show();await tick();check('opening panel keeps mascot pinned',false);
+ panel.hide();await tick();check('collapsed companion keeps mascot pinned',false);
+ const before=panel.isFocused();pet.showInactive();await tick();check('inactive show keeps mascot pinned',false);assert.equal(panel.isFocused(),before);
+ panel.setAlwaysOnTop(true);check('pin panel via setAlwaysOnTop',true);
+ panel.setAlwaysOnTop(false);check('unpin panel via setAlwaysOnTop',false);
+ pet.hide();pet.showInactive();await tick();check('mascot stays pinned across hide/show',false);
+ panel.setAlwaysOnTop(true);pet.hide();panel.hide();pet.showInactive();panel.show();await tick();check('panel pin survives tray-style restore',true);
  await panel.webContents.reload();await new Promise(r=>setTimeout(r,400));
- await panel.webContents.executeJavaScript('window.tada.onTop(true)');await tick();check('renderer bridge pins both after reload',true);
- await panel.webContents.executeJavaScript('window.tada.collapse()');await tick();check('bridge collapse leaves companion pinned',true);
+ await panel.webContents.executeJavaScript('window.tada.onTop(true)');await tick();check('renderer bridge pins panel after reload',true);
+ await panel.webContents.executeJavaScript('window.tada.collapse()');await tick();check('bridge collapse leaves panel pinned',true);
  const result={passed:true,checks:report,electron:process.versions.electron};
  await fs.mkdir(path.join(root,'work'),{recursive:true});await fs.writeFile(path.join(root,'work','pin-report-'+stamp+'.json'),JSON.stringify(result,null,2),{flag:'wx'});
  console.log(JSON.stringify(result));app.quit();
