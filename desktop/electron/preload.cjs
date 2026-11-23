@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('tada',Object.freeze({
   load:()=>ipcRenderer.invoke('tada:load'),
   save:state=>ipcRenderer.invoke('tada:save',state),
   chat:message=>ipcRenderer.invoke('tada:chat',message),
+  send:payload=>ipcRenderer.invoke('tada:send',payload),
   closeChat:()=>ipcRenderer.invoke('tada:close-chat')
 }));
 

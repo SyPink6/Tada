@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.config import Settings
 from app.models.entities import DailyLog, KnowledgeChunk, Snippet, Task
 from app.services.fetcher import RETURN_TEXT_LIMIT, fetch_url, is_url
-from app.services.knowledge import KnowledgeService
+from app.services.knowledge import KnowledgeService, save_snippet_fast
 from app.services.prompts import build_system_prompt
 from app.services.tasks import TaskService, _occurs_on, _parse_recurrence, _to_dict
 from app.services.tool_defs import TOOL_DEFS
@@ -28,6 +28,25 @@ _sessions = {}
 
 def _today_iso():
     return datetime.now().strftime("%Y-%m-%d")  # local date, matches frontend
+
+
+def _user_msg(text, image_base64=None, image_mime=None):
+    """Build a user message: plain string, or a vision content array if an image is attached."""
+    t = (text or "")[:2000]
+    if image_base64:
+        mime = (image_mime or "image/png").lower()
+        parts = []
+        if t:
+            parts.append({"type": "text", "text": t})
+        parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{image_base64}"}})
+        return {"role": "user", "content": parts}
+    return {"role": "user", "content": t}
+
+
+def _log_text(text, image_base64=None):
+    """Text to persist in daily_log for a user turn (images aren't persisted as images)."""
+    t = (text or "")[:2000]
+    return t or ("[图片]" if image_base64 else "")
 
 
 def execute_tool(name: str, args: dict, db: Session, settings: Settings) -> dict:
@@ -76,38 +95,18 @@ def execute_tool(name: str, args: dict, db: Session, settings: Settings) -> dict
             return {"ok": True, **r}
 
         if name == "save_snippet":
-            ksvc = KnowledgeService(db, settings)
-            title = args.get("title") or f"snippet-{int(time.time())}"
             stype = args.get("type") or "text"
-            content = args["content"]
+            title = args.get("title")
+            category = args.get("category")
+            content = args.get("content", "")
             url = None
-            fetch_note = ""
-            content_format = "text"
             if stype == "link" and is_url(content):
                 url = content
-                fetched = fetch_url(content)
-                if fetched.get("ok") and fetched.get("text"):
-                    text = fetched["text"]
-                    if not args.get("title") and fetched.get("title"):
-                        title = fetched["title"].strip()[:20] or title
-                    content = text
-                    content_format = fetched.get("content_format", "text")
-                    fetch_note = f"已抓取网页正文（约{fetched['length']}字）"
-                else:
-                    fetch_note = fetched.get("error") or "抓取失败，仅存了链接"
-            snip = Snippet(type=stype, title=title[:256], url=url,
-                           original_content=content, category=args.get("category"),
-                           content_format=content_format)
-            db.add(snip)
-            db.flush()
-            count = ksvc.ingest(snip.id, content)
-            result = {"ok": True, "id": snip.id, "title": snip.title, "type": snip.type,
-                      "chunks": count, "category": snip.category}
-            if url:
-                result["url"] = url
-            if fetch_note:
-                result["fetch"] = fetch_note
-            return result
+                content = None  # worker fetches async
+            snip = save_snippet_fast(db, type=stype, content=content, title=title,
+                                     url=url, category=category)
+            return {"ok": True, "id": snip.id, "title": snip.title, "type": snip.type,
+                    "status": snip.status, "category": snip.category}
 
         if name == "read_url":
             url = args["url"]
@@ -154,15 +153,17 @@ class AgentService:
     def __init__(self, settings: Settings):
         self.settings = settings
 
-    def run_session(self, session_key: str, user_message: str, db: Session, max_steps: int = 8) -> dict:
+    def run_session(self, session_key: str, user_message: str, db: Session, max_steps: int = 8,
+                    intent: str = "auto", image_base64: str | None = None, image_mime: str | None = None) -> dict:
         # Get or create the session conversation (with full tool history)
         conv = _sessions.get(session_key)
         if conv is None:
             conv = self._reconstruct_from_daily_log(session_key, db)
-        conv.append({"role": "user", "content": str(user_message)[:2000]})
+        conv.append(_user_msg(user_message, image_base64, image_mime))
 
         system = {"role": "system", "content": build_system_prompt({"today": session_key})}
-        full = [system] + conv[-30:]
+        intent_note = [{"role": "system", "content": "用户这次只想聊天，不要调 save_snippet。"}] if intent == "chat" else []
+        full = [system] + intent_note + conv[-30:]
         actions = []
         tool_events = []
         reply = ""
@@ -201,7 +202,7 @@ class AgentService:
                 category = "schedule"
             elif t in ("save_snippet", "delete_snippet", "search_knowledge", "read_url"):
                 category = "info"
-        db.add(DailyLog(date=session_key, entry_type="chat_user", content=str(user_message)[:2000], category=category))
+        db.add(DailyLog(date=session_key, entry_type="chat_user", content=_log_text(user_message, image_base64), category=category))
         for ev in tool_events:
             db.add(DailyLog(date=session_key, entry_type=ev["type"], content=ev["content"][:200], category=ev["category"]))
         if reply:
@@ -220,10 +221,11 @@ class AgentService:
                 conv.append({"role": "assistant", "content": e.content})
         return conv
 
-    def run_single(self, user_message, db, max_steps=8):
+    def run_single(self, user_message, db, max_steps=8, intent="auto", image_base64=None, image_mime=None):
         """Process a single message without session (no context/history). For desktop pet."""
         system = {"role": "system", "content": build_system_prompt({"today": _today_iso()})}
-        conv = [system, {"role": "user", "content": str(user_message)[:2000]}]
+        intent_note = [{"role": "system", "content": "用户这次只想聊天，不要调 save_snippet。"}] if intent == "chat" else []
+        conv = [system] + intent_note + [_user_msg(user_message, image_base64, image_mime)]
         actions = []
         tool_events = []
         reply = ""
@@ -257,7 +259,7 @@ class AgentService:
             elif t in ("save_snippet", "delete_snippet", "search_knowledge", "read_url"):
                 category = "info"
         today = _today_iso()
-        db.add(DailyLog(date=today, entry_type="chat_user", content=str(user_message)[:2000], category=category))
+        db.add(DailyLog(date=today, entry_type="chat_user", content=_log_text(user_message, image_base64), category=category))
         for ev in tool_events:
             db.add(DailyLog(date=today, entry_type=ev["type"], content=ev["content"][:200], category=ev["category"]))
         if reply:

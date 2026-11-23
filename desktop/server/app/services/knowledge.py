@@ -10,8 +10,41 @@ from typing import Hashable
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.models.entities import KnowledgeChunk
+from app.models.entities import KnowledgeChunk, Snippet
 from app.services.vector_store import FALLBACK_RETRIEVAL_LABEL, PRIMARY_RETRIEVAL_LABEL, ChromaKnowledgeStore
+
+
+def save_snippet_fast(
+    db: Session,
+    type: str,
+    content: str | None = None,
+    title: str | None = None,
+    url: str | None = None,
+    image_path: str | None = None,
+    category: str | None = None,
+    content_format: str = "text",
+) -> Snippet:
+    """Fast save: create a Snippet with status=pending and return it immediately.
+    Heavy work (chunk/embed/fetch/VLM) is done by the async enrichment worker.
+
+    - text: content = original text (title optional; worker can generate).
+    - link: url set, content left None (worker fetches + fills).
+    - image: image_path set, content left None (worker VLM-fills).
+    """
+    snip = Snippet(
+        type=type,
+        title=(title or "")[:256],
+        url=url,
+        image_path=image_path,
+        original_content=content,
+        category=category,
+        content_format=content_format,
+        status="pending",
+    )
+    db.add(snip)
+    db.flush()
+    db.commit()
+    return snip
 
 
 logger = logging.getLogger(__name__)
@@ -334,7 +367,11 @@ class KnowledgeService:
 
 
 def chunk_text(content: str, size: int, overlap: int) -> list[str]:
-    text = re.sub(r"\s+", " ", content or "").strip()
+    # Preserve newlines (keeps code/paragraph structure for search previews + BM25);
+    # only collapse runs of spaces/tabs and excessive blank lines.
+    text = re.sub(r"[ \t]+", " ", content or "")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = text.strip()
     if not text:
         return []
     chunks = []

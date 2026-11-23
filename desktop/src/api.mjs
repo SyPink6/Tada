@@ -15,8 +15,14 @@ async function get(url) {
 }
 
 // Agent chat — server runs the tool-calling loop, returns {reply, actions}.
-export async function chat(sessionKey, message) {
-  return post('/api/chat', {session_key: sessionKey, message});
+// opts: {intent:'auto'|'chat', image:{base64,mime}} — image enables vision, intent='chat' = converse only.
+export async function chat(sessionKey, message, opts) {
+  const body = {session_key: sessionKey, message: message || ''};
+  if (opts) {
+    if (opts.intent) body.intent = opts.intent;
+    if (opts.image && opts.image.base64) { body.image_base64 = opts.image.base64; body.image_mime = opts.image.mime || 'image/png'; }
+  }
+  return post('/api/chat', body);
 }
 
 // Tasks
@@ -56,6 +62,16 @@ export async function updateCategory(id, category) {
 }
 export async function refreshSnippet(id) {
   return post('/api/knowledge/refresh', {id});
+}
+// Direct fast-save (存 button): {type, content?, url?, title?, category?, image:{base64,mime}?}
+export async function saveSnippetDirect(payload) {
+  const body = {type: payload.type, content: payload.content, url: payload.url, title: payload.title, category: payload.category};
+  if (payload.image && payload.image.base64) { body.image_base64 = payload.image.base64; body.image_mime = payload.image.mime || 'image/png'; }
+  return post('/api/knowledge/save', body);
+}
+// URL for an image snippet's file (for <img src>).
+export function snippetImageUrl(id) {
+  return '/api/knowledge/image/' + id;
 }
 export async function searchKnowledge(query) {
   const data = await get('/api/knowledge/search?q=' + encodeURIComponent(query));

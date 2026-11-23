@@ -48,6 +48,20 @@ def ensure_snippet_schema(engine) -> None:
         if not _column_exists(conn, "snippets", "content_format"):
             logger.info("migrate: ADD COLUMN snippets.content_format")
             conn.execute(text("ALTER TABLE snippets ADD COLUMN content_format VARCHAR(20) NOT NULL DEFAULT 'text'"))
+        # async/image support: status (pending/ready/failed), image_path, error.
+        # existing rows are already analyzed → default status='ready'.
+        if not _column_exists(conn, "snippets", "status"):
+            logger.info("migrate: ADD COLUMN snippets.status")
+            conn.execute(text("ALTER TABLE snippets ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'ready'"))
+        if not _column_exists(conn, "snippets", "image_path"):
+            logger.info("migrate: ADD COLUMN snippets.image_path")
+            conn.execute(text("ALTER TABLE snippets ADD COLUMN image_path TEXT NULL"))
+        if not _column_exists(conn, "snippets", "error"):
+            logger.info("migrate: ADD COLUMN snippets.error")
+            conn.execute(text("ALTER TABLE snippets ADD COLUMN error TEXT NULL"))
+        if not _column_exists(conn, "snippets", "ocr_text"):
+            logger.info("migrate: ADD COLUMN snippets.ocr_text")
+            conn.execute(text("ALTER TABLE snippets ADD COLUMN ocr_text LONGTEXT NULL"))
         # original_content: TEXT (64KB) is too small for long articles (Chinese docs).
         # bump to MEDIUMTEXT (16MB) if it's still a small TEXT type.
         oc = conn.execute(text(

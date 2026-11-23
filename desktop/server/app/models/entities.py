@@ -18,12 +18,16 @@ class Snippet(Base):
     __tablename__ = "snippets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    type: Mapped[str] = mapped_column(String(20), default="text")  # text/link (image/file later)
+    type: Mapped[str] = mapped_column(String(20), default="text")  # text/link/image (file later)
     title: Mapped[str] = mapped_column(String(256))
     url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     original_content: Mapped[Optional[str]] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"), nullable=True)
+    ocr_text: Mapped[Optional[str]] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"), nullable=True)  # image: verbatim text (separate from description)
     category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     content_format: Mapped[str] = mapped_column(String(20), default="text")  # text/markdown
+    image_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # rel to data/images/ (image type)
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/ready/failed
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # set when status=failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
