@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.core.database import SessionLocal
-from app.models.entities import Snippet
+from app.models.entities import DailyLog, Snippet
 from app.services.knowledge import KnowledgeService, save_snippet_fast  # noqa: F401 (re-exported for convenience)
 from app.services import fetcher, vision
 
@@ -58,15 +58,42 @@ def summarize_title(content: str, settings: Settings) -> str:
         return ""
 
 
+def _update_chat_trail(db: Session, snip: Snippet, text: str) -> None:
+    """Update the '存到随手记了，正在分析…' chat_assistant message for this snippet
+    to reflect completion. Locates it via the snippet_saved event (content=snippet id)
+    and the chat_assistant immediately before it on the same day."""
+    try:
+        sv = (db.query(DailyLog).filter(DailyLog.entry_type == "snippet_saved", DailyLog.content == str(snip.id))
+              .order_by(DailyLog.id.desc()).first())
+        if not sv:
+            return
+        ca = (db.query(DailyLog).filter(DailyLog.entry_type == "chat_assistant", DailyLog.date == sv.date, DailyLog.id < sv.id)
+              .order_by(DailyLog.id.desc()).first())
+        if ca and ca.content.startswith("存到随手记了"):
+            ca.content = text[:2000]
+            db.commit()
+    except Exception as exc:
+        logger.warning("update chat trail failed for snippet %s: %s", snip.id, exc)
+
+
 def _mark(db: Session, snip: Snippet, status: str, error: str | None = None) -> None:
     snip.status = status
     if error is not None:
         snip.error = error[:500]
     db.commit()
+    # reflect completion in the chat history (so reload shows the final state, not "正在分析")
+    if status == "ready":
+        _update_chat_trail(db, snip, f"分析完成：{snip.title}")
+    elif status == "failed":
+        _update_chat_trail(db, snip, "分析失败了，可去随手记重试或删除")
 
 
 def process_one(db: Session, settings: Settings, snip: Snippet) -> None:
     """Enrich a single pending snippet in-place."""
+    if snip.chat_only:
+        # 聊/发送 image attachment: no VLM/chunks/search — just mark ready (file is already stored).
+        _mark(db, snip, "ready")
+        return
     svc = KnowledgeService(db, settings)
     try:
         if snip.type == "text":

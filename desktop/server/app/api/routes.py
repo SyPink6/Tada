@@ -42,6 +42,8 @@ class SaveSnippetRequest(BaseModel):
     category: str | None = None
     image_base64: str | None = None
     image_mime: str | None = None
+    message: str | None = None  # display text for the chat trail (e.g. "[图片]" or the content)
+    quiet: bool = False  # if True, don't write chat_user/chat_assistant (chat handles its own trail)
 
 class SearchRequest(BaseModel):
     query: str
@@ -96,9 +98,19 @@ def knowledge_save(req: SaveSnippetRequest, db: Session = Depends(get_db)):
         db, type=req.type, content=req.content, title=req.title,
         url=req.url, image_path=image_path, category=req.category,
     )
-    # leave a daily_log trail so the by-day 随手记 tab sees direct saves too
+    # quiet (聊/发送 image): chat_only=True → not in 随手记 list/search/by-day; just a stored file for the chat.
+    # non-quiet (存): write the full chat trail + snippet_saved so it shows in 随手记 + by-day.
     today = datetime.now().strftime("%Y-%m-%d")
-    db.add(DailyLog(date=today, entry_type="snippet_saved", content=str(snip.id), category="info"))
+    if req.quiet:
+        snip.chat_only = True
+    else:
+        db.add(DailyLog(date=today, entry_type="snippet_saved", content=str(snip.id), category="info"))
+        if req.type == "image":
+            user_msg = f"img:{snip.id}"
+        else:
+            user_msg = (req.message or req.content or req.url or "")[:2000]
+        db.add(DailyLog(date=today, entry_type="chat_user", content=user_msg, category="info"))
+        db.add(DailyLog(date=today, entry_type="chat_assistant", content="存到随手记了，正在分析…", category="info"))
     db.commit()
     return {"id": snip.id, "status": snip.status}
 
@@ -223,7 +235,7 @@ def _task_dict(svc, t):
 
 @router.get("/api/knowledge/list")
 def knowledge_list(db: Session = Depends(get_db)):
-    rows = db.query(Snippet).order_by(Snippet.created_at.desc()).all()
+    rows = db.query(Snippet).filter(Snippet.chat_only.is_(False)).order_by(Snippet.created_at.desc()).all()
     return {"snippets": [
         {"id": s.id, "title": s.title, "type": s.type, "category": s.category,
          "url": s.url, "preview": (s.original_content or "")[:200],
@@ -266,7 +278,8 @@ def knowledge_by_day(date: str, db: Session = Depends(get_db)):
         s = db.get(Snippet, int(e.content))
         if s:
             snippets.append({"id": s.id, "title": s.title, "type": s.type,
-                             "category": s.category, "preview": (s.original_content or "")[:200]})
+                             "category": s.category, "preview": (s.original_content or "")[:200],
+                             "status": s.status, "image_path": s.image_path})
     return {"snippets": snippets}
 
 @router.get("/api/knowledge/{snippet_id}")
@@ -278,7 +291,7 @@ def knowledge_detail(snippet_id: int, db: Session = Depends(get_db)):
             "original_content": s.original_content, "ocr_text": s.ocr_text,
             "category": s.category, "content_format": s.content_format, "image_path": s.image_path,
             "status": s.status, "error": s.error,
-            "created_at": s.created_at.isoformat() if s.created_at else None}
+            "created_at": (s.created_at.isoformat() + "Z") if s.created_at else None}
 
 class DeleteSnippetRequest(BaseModel):
     id: int
@@ -345,17 +358,22 @@ class ChatRequest(BaseModel):
     intent: str = "auto"  # auto / chat (chat = just converse, don't save)
     image_base64: str | None = None
     image_mime: str | None = None
+    image_snippet_id: int | None = None  # when the image was pre-saved as a snippet (聊/发送)
 
 @router.post("/api/chat")
 def chat(req: ChatRequest, db: Session = Depends(get_db)):
     svc = AgentService(settings)
     msg = req.message or ""
+    # if the image was pre-saved (聊/发送), reference it in the chat trail as img:{id}
+    image_ref = f"img:{req.image_snippet_id}" if req.image_snippet_id else None
     if req.no_session or not req.session_key:
         result = svc.run_single(msg, db, intent=req.intent,
-                                image_base64=req.image_base64, image_mime=req.image_mime)
+                                image_base64=req.image_base64, image_mime=req.image_mime,
+                                image_ref=image_ref)
     else:
         result = svc.run_session(req.session_key, msg, db, intent=req.intent,
-                                 image_base64=req.image_base64, image_mime=req.image_mime)
+                                 image_base64=req.image_base64, image_mime=req.image_mime,
+                                 image_ref=image_ref)
     return {"reply": result["reply"], "actions": result.get("actions", [])}
 
 

@@ -43,8 +43,12 @@ def _user_msg(text, image_base64=None, image_mime=None):
     return {"role": "user", "content": t}
 
 
-def _log_text(text, image_base64=None):
-    """Text to persist in daily_log for a user turn (images aren't persisted as images)."""
+def _log_text(text, image_base64=None, image_ref=None):
+    """Text to persist in daily_log for a user turn. If image_ref (img:{id}) is set
+    (聊/发送 with a pre-saved image), store that + the text so reload can render the image."""
+    if image_ref:
+        t = (text or "").strip()
+        return (image_ref + ("\n" + t if t else ""))[:2000]
     t = (text or "")[:2000]
     return t or ("[图片]" if image_base64 else "")
 
@@ -154,7 +158,8 @@ class AgentService:
         self.settings = settings
 
     def run_session(self, session_key: str, user_message: str, db: Session, max_steps: int = 8,
-                    intent: str = "auto", image_base64: str | None = None, image_mime: str | None = None) -> dict:
+                    intent: str = "auto", image_base64: str | None = None, image_mime: str | None = None,
+                    image_ref: str | None = None) -> dict:
         # Get or create the session conversation (with full tool history)
         conv = _sessions.get(session_key)
         if conv is None:
@@ -202,7 +207,7 @@ class AgentService:
                 category = "schedule"
             elif t in ("save_snippet", "delete_snippet", "search_knowledge", "read_url"):
                 category = "info"
-        db.add(DailyLog(date=session_key, entry_type="chat_user", content=_log_text(user_message, image_base64), category=category))
+        db.add(DailyLog(date=session_key, entry_type="chat_user", content=_log_text(user_message, image_base64, image_ref), category=category))
         for ev in tool_events:
             db.add(DailyLog(date=session_key, entry_type=ev["type"], content=ev["content"][:200], category=ev["category"]))
         if reply:
@@ -221,7 +226,7 @@ class AgentService:
                 conv.append({"role": "assistant", "content": e.content})
         return conv
 
-    def run_single(self, user_message, db, max_steps=8, intent="auto", image_base64=None, image_mime=None):
+    def run_single(self, user_message, db, max_steps=8, intent="auto", image_base64=None, image_mime=None, image_ref=None):
         """Process a single message without session (no context/history). For desktop pet."""
         system = {"role": "system", "content": build_system_prompt({"today": _today_iso()})}
         intent_note = [{"role": "system", "content": "用户这次只想聊天，不要调 save_snippet。"}] if intent == "chat" else []
@@ -259,7 +264,7 @@ class AgentService:
             elif t in ("save_snippet", "delete_snippet", "search_knowledge", "read_url"):
                 category = "info"
         today = _today_iso()
-        db.add(DailyLog(date=today, entry_type="chat_user", content=_log_text(user_message, image_base64), category=category))
+        db.add(DailyLog(date=today, entry_type="chat_user", content=_log_text(user_message, image_base64, image_ref), category=category))
         for ev in tool_events:
             db.add(DailyLog(date=today, entry_type=ev["type"], content=ev["content"][:200], category=ev["category"]))
         if reply:

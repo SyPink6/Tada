@@ -55,6 +55,12 @@
 .lightbox{position:fixed;inset:0;background:rgba(30,25,18,.82);display:flex;align-items:center;justify-content:center;z-index:1000;cursor:zoom-out;padding:24px}
 .lightbox img{max-width:92vw;max-height:90vh;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.4)}
 .snippet-notice{margin:4px 0 8px}
+.bubble-image{padding:4px!important}
+.bubble-image img{max-width:180px;max-height:180px;border-radius:10px;display:block}
+.bubble-image-caption{font-size:12px;color:#6b5d4a;margin-bottom:4px;display:block}
+.snippets-view.embedded{height:auto;min-height:0;flex:1;display:flex;flex-direction:column}
+.snippets-view.embedded .snippets-layout{flex:1;min-height:0}
+.snippets-view.embedded .snippets-main{overflow:auto}
 .snippet-ocr-section{margin-top:14px;background:rgba(180,165,120,.1);border:1px solid rgba(180,165,120,.22);border-radius:10px;padding:12px 14px}
 .snippet-ocr-label{font-size:11px;letter-spacing:1px;color:#8a7a4e;margin-bottom:6px}
 .snippet-ocr-text{white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.7;color:#6b5d4a}

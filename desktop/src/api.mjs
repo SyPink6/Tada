@@ -21,6 +21,7 @@ export async function chat(sessionKey, message, opts) {
   if (opts) {
     if (opts.intent) body.intent = opts.intent;
     if (opts.image && opts.image.base64) { body.image_base64 = opts.image.base64; body.image_mime = opts.image.mime || 'image/png'; }
+    if (opts.imageSnippetId) body.image_snippet_id = opts.imageSnippetId;
   }
   return post('/api/chat', body);
 }
@@ -65,7 +66,7 @@ export async function refreshSnippet(id) {
 }
 // Direct fast-save (存 button): {type, content?, url?, title?, category?, image:{base64,mime}?}
 export async function saveSnippetDirect(payload) {
-  const body = {type: payload.type, content: payload.content, url: payload.url, title: payload.title, category: payload.category};
+  const body = {type: payload.type, content: payload.content, url: payload.url, title: payload.title, category: payload.category, message: payload.message, quiet: payload.quiet||false};
   if (payload.image && payload.image.base64) { body.image_base64 = payload.image.base64; body.image_mime = payload.image.mime || 'image/png'; }
   return post('/api/knowledge/save', body);
 }

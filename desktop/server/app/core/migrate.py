@@ -62,6 +62,9 @@ def ensure_snippet_schema(engine) -> None:
         if not _column_exists(conn, "snippets", "ocr_text"):
             logger.info("migrate: ADD COLUMN snippets.ocr_text")
             conn.execute(text("ALTER TABLE snippets ADD COLUMN ocr_text LONGTEXT NULL"))
+        if not _column_exists(conn, "snippets", "chat_only"):
+            logger.info("migrate: ADD COLUMN snippets.chat_only")
+            conn.execute(text("ALTER TABLE snippets ADD COLUMN chat_only TINYINT(1) NOT NULL DEFAULT 0"))
         # original_content: TEXT (64KB) is too small for long articles (Chinese docs).
         # bump to MEDIUMTEXT (16MB) if it's still a small TEXT type.
         oc = conn.execute(text(

@@ -27,6 +27,7 @@ class Snippet(Base):
     content_format: Mapped[str] = mapped_column(String(20), default="text")  # text/markdown
     image_path: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # rel to data/images/ (image type)
     status: Mapped[str] = mapped_column(String(20), default="pending")  # pending/ready/failed
+    chat_only: Mapped[bool] = mapped_column(Boolean, default=False)  # True = 聊/发送 image attachment (not in 随手记/search)
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # set when status=failed
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
