@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SearchResult:
     chunk_id: int | None
-    source: str
+    snippet_id: int | None
     content: str
     score: float
 
@@ -41,18 +41,18 @@ class KnowledgeService:
     def count(self) -> int:
         return self.db.query(KnowledgeChunk).count()
 
-    def ensure_source(self, source: str, content: str) -> int:
+    def ensure_snippet(self, snippet_id: int, content: str) -> int:
         chunks = chunk_text(content, self.settings.knowledge_chunk_size, self.settings.knowledge_chunk_overlap)
         existing = [
             chunk.content
             for chunk in self.db.query(KnowledgeChunk)
-            .filter(KnowledgeChunk.source == source)
+            .filter(KnowledgeChunk.snippet_id == snippet_id)
             .order_by(KnowledgeChunk.source_index.asc())
             .all()
         ]
         if existing == chunks:
             return len(existing)
-        return self.ingest(source, content)
+        return self.ingest(snippet_id, content)
 
     def status(self) -> dict:
         vector_chunks = None
@@ -88,7 +88,7 @@ class KnowledgeService:
     def rebuild_vector_index(self) -> int:
         if not self.vector_store.can_embed:
             raise RuntimeError(getattr(self.vector_store, "error", "") or "Chroma 向量库不可用")
-        rows = self.db.query(KnowledgeChunk).order_by(KnowledgeChunk.source.asc(), KnowledgeChunk.source_index.asc()).all()
+        rows = self.db.query(KnowledgeChunk).order_by(KnowledgeChunk.snippet_id.asc(), KnowledgeChunk.source_index.asc()).all()
         self._sync_vector_chunks(rows)
         self.db.commit()
         return len(rows)
@@ -101,13 +101,13 @@ class KnowledgeService:
             raise RuntimeError("Chroma 持久化目录不存在，无法生成快照")
         return snapshot
 
-    def ingest(self, source: str, content: str) -> int:
+    def ingest(self, snippet_id: int, content: str) -> int:
         chunks = chunk_text(content, self.settings.knowledge_chunk_size, self.settings.knowledge_chunk_overlap)
-        self._delete_vector_source(source)
-        self.db.query(KnowledgeChunk).filter(KnowledgeChunk.source == source).delete()
+        self._delete_snippet_chunks(snippet_id)
+        self.db.query(KnowledgeChunk).filter(KnowledgeChunk.snippet_id == snippet_id).delete()
         rows = []
         for index, chunk in enumerate(chunks):
-            row = KnowledgeChunk(source=source, source_index=index, content=chunk)
+            row = KnowledgeChunk(snippet_id=snippet_id, source_index=index, content=chunk)
             self.db.add(row)
             rows.append(row)
         self.db.flush()
@@ -140,7 +140,7 @@ class KnowledgeService:
         chunks = chunks if chunks is not None else self.db.query(KnowledgeChunk).all()
         scores = bm25_scores(query, chunks)
         ranked = [
-            SearchResult(chunk.id, chunk.source, chunk.content, scores.get(chunk.id, 0.0))
+            SearchResult(chunk.id, chunk.snippet_id, chunk.content, scores.get(chunk.id, 0.0))
             for chunk in chunks
             if chunk.id is not None and scores.get(chunk.id, 0.0) > 0
         ]
@@ -219,7 +219,7 @@ class KnowledgeService:
             results.append(
                 SearchResult(
                     chunk.id if chunk is not None else hit.chunk_id,
-                    chunk.source if chunk is not None else hit.source,
+                    chunk.snippet_id if chunk is not None else None,
                     chunk.content if chunk is not None else hit.content,
                     hit.score,
                 )
@@ -227,7 +227,7 @@ class KnowledgeService:
         return results
 
     def _ensure_vector_index(self) -> None:
-        rows = self.db.query(KnowledgeChunk).order_by(KnowledgeChunk.source.asc(), KnowledgeChunk.source_index.asc()).all()
+        rows = self.db.query(KnowledgeChunk).order_by(KnowledgeChunk.snippet_id.asc(), KnowledgeChunk.source_index.asc()).all()
         if not rows:
             return
         if (
@@ -239,13 +239,19 @@ class KnowledgeService:
         self._sync_vector_chunks(rows)
         self.db.commit()
 
-    def _delete_vector_source(self, source: str) -> None:
+    def _delete_snippet_chunks(self, snippet_id: int) -> None:
         if not self.vector_store.can_embed:
             return
+        chunk_ids = [
+            cid for (cid,) in self.db.query(KnowledgeChunk.id)
+            .filter(KnowledgeChunk.snippet_id == snippet_id).all()
+        ]
+        if not chunk_ids:
+            return
         try:
-            self.vector_store.delete_source(source)
+            self.vector_store.delete_chunks(chunk_ids)
         except Exception as exc:
-            self._handle_vector_error("delete_source", exc)
+            self._handle_vector_error("delete_snippet_chunks", exc)
 
     def _index_vector_chunks(self, chunks: list[KnowledgeChunk]) -> None:
         if not chunks or not self.vector_store.can_embed:
@@ -318,13 +324,13 @@ class KnowledgeService:
             return result
         neighbors = (
             self.db.query(KnowledgeChunk)
-            .filter(KnowledgeChunk.source == chunk.source)
+            .filter(KnowledgeChunk.snippet_id == chunk.snippet_id)
             .filter(KnowledgeChunk.source_index >= max(0, chunk.source_index - 1))
             .filter(KnowledgeChunk.source_index <= chunk.source_index + 1)
             .order_by(KnowledgeChunk.source_index.asc())
             .all()
         )
-        return SearchResult(chunk.id, chunk.source, "\n\n".join(item.content for item in neighbors), result.score)
+        return SearchResult(chunk.id, chunk.snippet_id, "\n\n".join(item.content for item in neighbors), result.score)
 
 
 def chunk_text(content: str, size: int, overlap: int) -> list[str]:
@@ -427,11 +433,11 @@ def normalize_scores(scores: dict[Hashable, float]) -> dict[Hashable, float]:
 
 
 def result_key(result: SearchResult) -> Hashable:
-    return result.chunk_id if result.chunk_id is not None else (result.source, result.content)
+    return result.chunk_id if result.chunk_id is not None else (result.snippet_id, result.content)
 
 
 def replace_score(result: SearchResult, score: float) -> SearchResult:
-    return SearchResult(result.chunk_id, result.source, result.content, score)
+    return SearchResult(result.chunk_id, result.snippet_id, result.content, score)
 
 
 def parse_embedding(raw: str | None) -> list[float] | None:

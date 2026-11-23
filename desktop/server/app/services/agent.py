@@ -14,7 +14,8 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.models.entities import DailyLog, KnowledgeChunk, Task
+from app.models.entities import DailyLog, KnowledgeChunk, Snippet, Task
+from app.services.fetcher import RETURN_TEXT_LIMIT, fetch_url, is_url
 from app.services.knowledge import KnowledgeService
 from app.services.prompts import build_system_prompt
 from app.services.tasks import TaskService, _occurs_on, _parse_recurrence, _to_dict
@@ -76,33 +77,73 @@ def execute_tool(name: str, args: dict, db: Session, settings: Settings) -> dict
 
         if name == "save_snippet":
             ksvc = KnowledgeService(db, settings)
-            source = args.get("title") or f"snippet-{int(time.time())}"
-            count = ksvc.ingest(source, args["content"])
-            if args.get("category"):
-                db.query(KnowledgeChunk).filter(KnowledgeChunk.source == source).update({KnowledgeChunk.category: args["category"]})
-                db.commit()
-            return {"ok": True, "source": source, "chunks": count, "category": args.get("category")}
+            title = args.get("title") or f"snippet-{int(time.time())}"
+            stype = args.get("type") or "text"
+            content = args["content"]
+            url = None
+            fetch_note = ""
+            content_format = "text"
+            if stype == "link" and is_url(content):
+                url = content
+                fetched = fetch_url(content)
+                if fetched.get("ok") and fetched.get("text"):
+                    text = fetched["text"]
+                    if not args.get("title") and fetched.get("title"):
+                        title = fetched["title"].strip()[:20] or title
+                    content = text
+                    content_format = fetched.get("content_format", "text")
+                    fetch_note = f"已抓取网页正文（约{fetched['length']}字）"
+                else:
+                    fetch_note = fetched.get("error") or "抓取失败，仅存了链接"
+            snip = Snippet(type=stype, title=title[:256], url=url,
+                           original_content=content, category=args.get("category"),
+                           content_format=content_format)
+            db.add(snip)
+            db.flush()
+            count = ksvc.ingest(snip.id, content)
+            result = {"ok": True, "id": snip.id, "title": snip.title, "type": snip.type,
+                      "chunks": count, "category": snip.category}
+            if url:
+                result["url"] = url
+            if fetch_note:
+                result["fetch"] = fetch_note
+            return result
+
+        if name == "read_url":
+            url = args["url"]
+            fetched = fetch_url(url)
+            if fetched.get("ok"):
+                text = fetched["text"]
+                return {"ok": True, "url": url, "title": fetched.get("title", ""),
+                        "text": text[:RETURN_TEXT_LIMIT], "length": fetched.get("length", len(text))}
+            return {"ok": False, "url": url, "error": fetched.get("error", "抓取失败")}
 
         if name == "list_snippets":
-            rows = db.query(KnowledgeChunk.source).distinct().all()
-            snippets = []
-            for (source,) in rows:
-                first = db.query(KnowledgeChunk).filter(KnowledgeChunk.source == source).order_by(KnowledgeChunk.source_index).first()
-                snippets.append({"source": source, "content": (first.content[:140] if first else "")})
-            return {"snippets": snippets}
+            rows = db.query(Snippet).order_by(Snippet.created_at.desc()).all()
+            return {"snippets": [
+                {"id": s.id, "title": s.title, "type": s.type, "category": s.category,
+                 "url": s.url, "preview": (s.original_content or "")[:140]}
+                for s in rows
+            ]}
 
         if name == "delete_snippet":
+            sid = args["id"]
             ksvc = KnowledgeService(db, settings)
-            source = args["source"]
-            ksvc._delete_vector_source(source)
-            db.query(KnowledgeChunk).filter(KnowledgeChunk.source == source).delete()
+            ksvc._delete_snippet_chunks(sid)
+            db.query(KnowledgeChunk).filter(KnowledgeChunk.snippet_id == sid).delete()
+            db.query(Snippet).filter(Snippet.id == sid).delete()
             db.commit()
-            return {"ok": True}
+            return {"ok": True, "id": sid}
 
         if name == "search_knowledge":
             ksvc = KnowledgeService(db, settings)
             results = ksvc.retrieve(args["query"], args.get("top_k"))
-            return {"results": [{"source": r.source, "content": r.content, "score": r.score} for r in results]}
+            out = []
+            for r in results:
+                snip = db.get(Snippet, r.snippet_id) if r.snippet_id is not None else None
+                out.append({"snippet_id": r.snippet_id, "title": snip.title if snip else "",
+                            "content": r.content, "score": r.score})
+            return {"results": out}
 
         return {"ok": False, "error": "unknown tool"}
     except Exception as e:
@@ -158,7 +199,7 @@ class AgentService:
             t = action.get("tool", "")
             if t in ("create_task", "update_task", "delete_task", "toggle_task", "insert_task", "apply_order"):
                 category = "schedule"
-            elif t in ("save_snippet", "delete_snippet", "search_knowledge"):
+            elif t in ("save_snippet", "delete_snippet", "search_knowledge", "read_url"):
                 category = "info"
         db.add(DailyLog(date=session_key, entry_type="chat_user", content=str(user_message)[:2000], category=category))
         for ev in tool_events:
@@ -213,7 +254,7 @@ class AgentService:
             t = action.get("tool", "")
             if t in ("create_task", "update_task", "delete_task", "toggle_task", "insert_task", "apply_order"):
                 category = "schedule"
-            elif t in ("save_snippet", "delete_snippet", "search_knowledge"):
+            elif t in ("save_snippet", "delete_snippet", "search_knowledge", "read_url"):
                 category = "info"
         today = _today_iso()
         db.add(DailyLog(date=today, entry_type="chat_user", content=str(user_message)[:2000], category=category))
@@ -239,11 +280,13 @@ class AgentService:
         if tool in ("insert_task", "apply_order"):
             return {"type": "task_reordered", "content": str(args.get("date", "")), "category": "schedule"}
         if tool == "save_snippet" and ok:
-            return {"type": "snippet_saved", "content": result.get("source", ""), "category": "info"}
+            return {"type": "snippet_saved", "content": str(result.get("id", "")), "category": "info"}
         if tool == "delete_snippet":
-            return {"type": "snippet_deleted", "content": args.get("source", ""), "category": "info"}
+            return {"type": "snippet_deleted", "content": str(args.get("id", "")), "category": "info"}
         if tool == "search_knowledge":
             return {"type": "knowledge_searched", "content": args.get("query", ""), "category": "info"}
+        if tool == "read_url":
+            return {"type": "url_read", "content": args.get("url", ""), "category": "info"}
         return None
 
     def auto_sort(self, date, tasks, db):

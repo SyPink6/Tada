@@ -22,7 +22,6 @@ class VectorStoreUnavailable(RuntimeError):
 @dataclass
 class VectorSearchHit:
     chunk_id: int | None
-    source: str
     source_index: int
     content: str
     score: float
@@ -69,7 +68,7 @@ class ChromaKnowledgeStore:
         ids = [self._id(chunk.id) for chunk in rows]
         documents = [chunk.content for chunk in rows]
         metadatas = [
-            {"db_id": int(chunk.id), "source": chunk.source, "source_index": int(chunk.source_index)}
+            {"db_id": int(chunk.id), "source_index": int(chunk.source_index)}
             for chunk in rows
         ]
         self.collection.upsert(ids=ids, documents=documents, metadatas=metadatas, embeddings=embeddings)
@@ -89,10 +88,11 @@ class ChromaKnowledgeStore:
         current_ids = set(self.collection.get().get("ids", []))
         return current_ids == valid_ids
 
-    def delete_source(self, source: str) -> None:
-        if not self.can_embed:
+    def delete_chunks(self, chunk_ids: list[int]) -> None:
+        """Delete vector rows by exact Chroma id (keyed by chunk.id). No metadata dependency."""
+        if not self.can_embed or not chunk_ids:
             return
-        self.collection.delete(where={"source": source})
+        self.collection.delete(ids=[self._id(cid) for cid in chunk_ids])
 
     def query(self, query_embedding: list[float], top_k: int) -> list[VectorSearchHit]:
         result = self.collection.query(
@@ -110,7 +110,6 @@ class ChromaKnowledgeStore:
             hits.append(
                 VectorSearchHit(
                     chunk_id=int(metadata["db_id"]) if metadata.get("db_id") is not None else None,
-                    source=str(metadata.get("source", "")),
                     source_index=int(metadata.get("source_index", 0)),
                     content=document or "",
                     score=1.0 / (1.0 + max(0.0, distance)),

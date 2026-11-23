@@ -42,14 +42,20 @@ export async function listSnippets() {
   const data = await get('/api/knowledge/list');
   return data.snippets || [];
 }
-export async function deleteSnippet(source) {
-  return post('/api/knowledge/delete', {source});
+export async function getSnippet(id) {
+  return get('/api/knowledge/' + id);
 }
-export async function renameSnippet(oldSource, newSource) {
-  return post('/api/knowledge/rename', {old_source: oldSource, new_source: newSource});
+export async function deleteSnippet(id) {
+  return post('/api/knowledge/delete', {id});
 }
-export async function updateCategory(source, category) {
-  return post('/api/knowledge/category', {source, category});
+export async function renameSnippet(id, title) {
+  return post('/api/knowledge/rename', {id, title});
+}
+export async function updateCategory(id, category) {
+  return post('/api/knowledge/category', {id, category});
+}
+export async function refreshSnippet(id) {
+  return post('/api/knowledge/refresh', {id});
 }
 export async function searchKnowledge(query) {
   const data = await get('/api/knowledge/search?q=' + encodeURIComponent(query));

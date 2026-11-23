@@ -1,9 +1,13 @@
 import React,{useEffect,useRef,useState} from 'react';
 import{createRoot}from'react-dom/client';
+import{marked}from'marked';
+import DOMPurify from'dompurify';
 import{initialState,transition}from'./model.mjs';
 import{load,save}from'./storage.mjs';
 import * as api from './api.mjs';
 import './styles.css';
+marked.setOptions({breaks:true,gfm:true});
+function renderMarkdown(md){return DOMPurify.sanitize(marked.parse(md||''));}
 
 function Icon({name,size=20,...props}){
  const paths={spark:'m12 3 2.6 6.4L21 12l-6.4 2.6L12 21l-2.6-6.4L3 12l6.4-2.6L12 3Z',leaf:'M19 4C7 2 2 9 7 16c7 5 14 0 12-12ZM6 19l9-10',check:'m5 12 4 4L19 6',arrow:'M5 12h14m-5-5 5 5-5 5',moon:'M20 14A8 8 0 0 1 10 4a8 8 0 1 0 10 10Z',close:'m6 6 12 12M6 18 18 6',minus:'M5 12h14',plus:'M5 12h14M12 5v14',back:'M19 12H5m5-5-5 5 5 5',settings:'M4 7h16M4 17h16M8 4v6m8 4v6',clock:'M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',pin:'m8 3 8 0-1 6 3 3H6l3-3-1-6Zm4 9v9',cup:'M5 7h12v7a5 5 0 0 1-10 0V7Zm12 1h2a3 3 0 0 1 0 6h-2M5 21h14',edit:'m15 4 5 5L9 20H4v-5L15 4Z',grid:'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z'};
@@ -12,10 +16,17 @@ function Icon({name,size=20,...props}){
 function Dango({sleep=false,happy=false,motion=false}){return <svg className={`dango ${motion?'breathing':''}`} viewBox="0 0 180 150" fill="none" aria-hidden="true"><defs><radialGradient id="body"><stop stopColor="#FFF5D9"/><stop offset="1" stopColor="#F5D9AA"/></radialGradient><filter id="shadow"><feGaussianBlur stdDeviation="4"/></filter></defs><ellipse cx="91" cy="133" rx="54" ry="7" fill="#94734A" opacity=".14" filter="url(#shadow)"/><ellipse cx="64" cy="123" rx="16" ry="9" fill="#EFC493"/><ellipse cx="116" cy="123" rx="16" ry="9" fill="#EFC493"/><path d="M30 92C20 62 43 34 66 26c16-14 43-14 55 1 25 8 47 30 40 60-5 31-29 42-68 42-37 0-58-11-63-37Z" fill="url(#body)" stroke="#DDC399" strokeWidth="1.2"/><path d="M43 64c5-15 16-23 28-27" stroke="#FFFDF1" strokeWidth="5" strokeLinecap="round" opacity=".8"/><ellipse cx="57" cy="91" rx="11" ry="6" fill="#EDB7A0" opacity=".75"/><ellipse cx="126" cy="91" rx="11" ry="6" fill="#EDB7A0" opacity=".75"/>{sleep?<><path d="m70 80 9 2m27 0 9-2" stroke="#6B5141" strokeWidth="3" strokeLinecap="round"/><path d="M86 94h10" stroke="#6B5141" strokeWidth="2.5" strokeLinecap="round"/></>:<><ellipse cx="76" cy="80" rx="3.2" ry="4" fill="#604B3C"/><ellipse cx="108" cy="80" rx="3.2" ry="4" fill="#604B3C"/><path d={happy?'M84 93q8 13 16 0Z':'M86 93q6 7 12 0'} stroke="#604B3C" strokeWidth="2.2" fill={happy?'#C2886F':'none'} strokeLinecap="round"/></>}{happy&&<path d="m150 21 3 7 7 3-7 3-3 7-3-7-7-3 7-3Z" fill="#D5AD62"/>}</svg>}
 
 const view=new URLSearchParams(location.search).get('view')||'preview';
+const TAB_PATHS={home:'/home',plan:'/',snippets:'/snippets',calendar:'/calendar',journal:'/journal',settings:'/settings'};
+function parseRoute(pathname){const p=(pathname||location.pathname).replace(/^\/+|\/+$/g,'');if(p.startsWith('snippets/')){const sid=Number(p.split('/')[1]);return{tab:'snippets',snippetId:Number.isFinite(sid)&&sid>0?sid:null};}const e=Object.entries(TAB_PATHS).find(([,v])=>(v.replace(/^\/+|\/+$/g,''))===p);return{tab:e?e[0]:'plan',snippetId:null};}
 function PetOnly(){return <div className="native-pet"><div className="pet-drag" title="按住这里拖动小团子">⠿</div><button className="pet-button" aria-label="展开 Tada 任务面板" onClick={()=>window.tada?.toggle()}><Dango/><span className="pet-label">Tada!</span></button><button className="pet-collapse" aria-label="收起小团子" title="收起小团子，藏到托盘" onClick={()=>window.tada?.rest()}><Icon name="minus" size={13}/></button></div>}
 function App(){
- const[state,setState]=useState(initialState),[loaded,setLoaded]=useState(false),[saveError,setSaveError]=useState(''),[expanded,setExpanded]=useState(true),[tab,setTab]=useState('plan'),[manual,setManual]=useState(false),[manualText,setManualText]=useState(''),[editing,setEditing]=useState(false),[editText,setEditText]=useState(''),[inputError,setInputError]=useState('');
+ const[state,setState]=useState(initialState),[loaded,setLoaded]=useState(false),[saveError,setSaveError]=useState(''),[expanded,setExpanded]=useState(true),[tab,_setTab]=useState(()=>parseRoute(location.pathname).tab),[snippetId,setSnippetId]=useState(()=>parseRoute(location.pathname).snippetId),[manual,setManual]=useState(false),[manualText,setManualText]=useState(''),[editing,setEditing]=useState(false),[editText,setEditText]=useState(''),[inputError,setInputError]=useState('');
  const native=view==='panel',queue=useRef(Promise.resolve()),latest=useRef(state),dialogRef=useRef(null);
+ const applyRoute=(pathname)=>{const r=parseRoute(pathname);_setTab(r.tab);setSnippetId(r.snippetId);};
+ const setTab=(t)=>{const path=TAB_PATHS[t]||'/';if(path!==location.pathname)history.pushState(null,'',path);applyRoute(path);};
+ const goSnippet=(id)=>{const path='/snippets/'+id;if(path!==location.pathname)history.pushState(null,'',path);applyRoute(path);};
+ const goSnippetsList=()=>{const path='/snippets';if(path!==location.pathname)history.pushState(null,'',path);applyRoute(path);};
+ useEffect(()=>{const onPop=()=>applyRoute(location.pathname);window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop);},[]);
  useEffect(()=>{load().then(s=>{if(s?.version===1){latest.current=s;setState(s);}setLoaded(true);}).catch(()=>{setSaveError('未能读取本地记录，本次操作仍可继续。');setLoaded(true);});},[]);
  function dispatch(action){const next=transition(latest.current,action);latest.current=next;setState(next);queue.current=queue.current.then(()=>save(next)).then(()=>setSaveError('')).catch(()=>setSaveError('暂时未能保存。请先保留此窗口，稍后操作会再次尝试。'));}
  useEffect(()=>{if(native)window.tada?.onTop(state.preferences.onTop);},[state.preferences.onTop,native]);
@@ -55,8 +66,8 @@ function App(){
  </section>;
  if(native)return <main className={`native-root ${state.preferences.motion?'motion':''}`}>{card}</main>;
  return <main className="studio"><aside className="sidebar"><div className="brand"><span className="brand-icon"><Icon name="spark" size={23}/></span><span>Tada<span className="brand-exclaim">!</span></span></div><p className="brand-sub">让每一小步，都有陪伴。</p><div className="nav-label">MY LITTLE SPACE</div><nav aria-label="主导航"><button className={tab==='home'?'selected':''} onClick={()=>{setTab('home');setExpanded(true);}}><Icon name="grid"/>我的角落<span className="nav-dot"/></button><button className={tab==='plan'?'selected':''} onClick={()=>setTab('plan')}><Icon name="spark"/>和团子聊聊<span className="nav-dot"/></button><button className={tab==='snippets'?'selected':''} onClick={()=>setTab('snippets')}><Icon name="leaf"/>随手记</button><button className={tab==='calendar'?'selected':''} onClick={()=>setTab('calendar')}><Icon name="clock"/>日历</button><button className={tab==='journal'?'selected':''} onClick={()=>setTab('journal')}><Icon name="leaf"/>小步记录{state.history.length>0&&<small>{state.history.length}</small>}</button><button className={tab==='settings'?'selected':''} onClick={settings}><Icon name="settings"/>陪伴偏好</button></nav><div className="sidebar-note"><span className="note-star">✳</span><p>不必一下子<br/>成为很厉害的人。</p><span>今天，先做一点点就好。</span><svg viewBox="0 0 140 35" aria-hidden="true"><path d="M3 25q25-20 45-4t44-3 44-6" fill="none" stroke="#B8BDA3" strokeWidth="2"/></svg></div><div className="sidebar-bottom"><span className="online-dot"/><span>安静陪伴中<small>没有催促，也没有落后。</small></span></div></aside>
- <section className="workspace"><header className="workspace-header"><div><span className="breadcrumb">我的空间 <span>/</span> {tab==='plan'?'和团子聊聊':tab==='snippets'?'随手记':tab==='calendar'?'日历':tab==='journal'?'小步记录':'桌面陪伴'}</span><h2>{tab==='plan'?'想到什么，就告诉团子。':tab==='snippets'?'按类别整理你的零碎记录。':tab==='calendar'?'所有天的小步，都在这里。':tab==='journal'?'那些小小的做到，都算数。':'留一点空间，慢慢来。'}</h2>{tab==='plan'&&<p className="header-sub">待办、日程，或是突然冒出来的小想法，团子都会帮你整理好。</p>}</div>{tab!=='plan'&&tab!=='calendar'&&tab!=='snippets'&&<button className="outline-button" onClick={()=>{setTab('home');setExpanded(!expanded);}}><Icon name={expanded?'minus':'plus'} size={17}/>{expanded?'只留小团子':'展开任务卡'}</button>}</header>
- {tab==='plan'?<PlanView onGoCalendar={()=>setTab('calendar')}/>:tab==='snippets'?<SnippetsView/>:tab==='calendar'?<CalendarView onGoPlan={()=>setTab('plan')}/>:tab==='journal'?<section className="journal"><span className="eyebrow">LITTLE STEPS, REAL PROGRESS</span><h1>每一步，都留在这里。</h1><p className="muted">没有连续打卡。只有你已经走过的路。</p>{state.history.length?<div className="journal-list">{[...state.history].reverse().map(item=><article key={item.id}><span className="journal-check"><Icon name="check"/></span><div><h3>{item.title}</h3><p>{item.taskTitle}</p></div><time>{new Date(item.at).toLocaleDateString('zh-CN',{month:'long',day:'numeric'})}</time></article>)}</div>:<div className="empty-state"><Dango sleep/><h3>不用急着填满这里。</h3><p>完成一小步，它就会安静地留下来。</p><button className="secondary" onClick={()=>{setTab('home');setExpanded(true);}}>回去找一小步<Icon name="arrow" size={16}/></button></div>}</section>:<div className={`desktop-scene ${expanded?'is-expanded':'is-collapsed'}`}><Landscape/>
+ <section className="workspace"><header className="workspace-header"><div><span className="breadcrumb">我的空间 <span>/</span> {tab==='plan'?'和团子聊聊':tab==='snippets'?'随手记':tab==='calendar'?'日历':tab==='journal'?'小步记录':'桌面陪伴'}</span><h2>{tab==='plan'?'想到什么，就告诉团子。':tab==='snippets'?(snippetId?'查看一条记录':'按类别整理你的零碎记录。'):tab==='calendar'?'所有天的小步，都在这里。':tab==='journal'?'那些小小的做到，都算数。':'留一点空间，慢慢来。'}</h2>{tab==='plan'&&<p className="header-sub">待办、日程，或是突然冒出来的小想法，团子都会帮你整理好。</p>}</div>{tab!=='plan'&&tab!=='calendar'&&tab!=='snippets'&&<button className="outline-button" onClick={()=>{setTab('home');setExpanded(!expanded);}}><Icon name={expanded?'minus':'plus'} size={17}/>{expanded?'只留小团子':'展开任务卡'}</button>}</header>
+ {tab==='plan'?<PlanView onGoCalendar={()=>setTab('calendar')}/>:tab==='snippets'?(snippetId?<SnippetDetail id={snippetId} onBack={goSnippetsList} onDeleted={goSnippetsList}/>:<SnippetsView onOpen={goSnippet}/>):tab==='calendar'?<CalendarView onGoPlan={()=>setTab('plan')}/>:tab==='journal'?<section className="journal"><span className="eyebrow">LITTLE STEPS, REAL PROGRESS</span><h1>每一步，都留在这里。</h1><p className="muted">没有连续打卡。只有你已经走过的路。</p>{state.history.length?<div className="journal-list">{[...state.history].reverse().map(item=><article key={item.id}><span className="journal-check"><Icon name="check"/></span><div><h3>{item.title}</h3><p>{item.taskTitle}</p></div><time>{new Date(item.at).toLocaleDateString('zh-CN',{month:'long',day:'numeric'})}</time></article>)}</div>:<div className="empty-state"><Dango sleep/><h3>不用急着填满这里。</h3><p>完成一小步，它就会安静地留下来。</p><button className="secondary" onClick={()=>{setTab('home');setExpanded(true);}}>回去找一小步<Icon name="arrow" size={16}/></button></div>}</section>:<div className={`desktop-scene ${expanded?'is-expanded':'is-collapsed'}`}><Landscape/>
  <div className="desktop-status"><span className="online-dot"/>{active?'只做眼前这一小步':'小团子在这里，安静陪着你'}<span className="status-divider"/><Icon name="moon" size={14}/> 免打扰</div>
  <div className="scene-poem"><span>ONE SMALL STEP AT A TIME</span><h2>今天，也按照<br/>自己的节奏来。</h2><p>不需要一直专注。<br/>回来时，我帮你接上。</p><div className="poem-line"/></div>
  <div className="desktop-note"><span className="tape"/><Icon name="leaf" size={21}/><p>{recent.length?'你已经做到了':'今天的小约定'}</p><h3>{recent[0]?.title||'把「开始」，\n变得再轻一点。'}</h3><small>{recent.length?'这一小步，值得被记住。':'只走一步，也是在向前。'}</small></div>
@@ -66,14 +77,14 @@ function App(){
  </div>}
  <footer className="workspace-footer"><span><Icon name="leaf" size={15}/> 每一小步，都值得庆祝。</span><button onClick={newTask}><Icon name="plus" size={15}/>放一件新的小事</button><span className="prototype-label">前端展示版 v0.1</span></footer></section></main>;
 }
-function SnippetsView(){
+function SnippetsView({onOpen}){
  const[snippets,setSnippets]=useState([]);
  const[selectedCat,setSelectedCat]=useState(null);
  const[searchQ,setSearchQ]=useState('');
  const[searchResults,setSearchResults]=useState(null);
  const[searching,setSearching]=useState(false);
  const[loading,setLoading]=useState(true);
- const[editingSource,setEditingSource]=useState(null);
+ const[editingId,setEditingId]=useState(null);
  const[editValue,setEditValue]=useState('');
  const[confirmState,setConfirmState]=useState({open:false,message:'',onConfirm:null});
  async function refresh(){try{const r=await api.listSnippets();setSnippets(r||[]);}catch{setSnippets([]);}setLoading(false);}
@@ -82,24 +93,76 @@ function SnippetsView(){
  const filtered=searchResults!==null?searchResults:(selectedCat===null?snippets:selectedCat==='__uncat'?snippets.filter(s=>!s.category):snippets.filter(s=>s.category===selectedCat));
  function customConfirm(msg,fn){setConfirmState({open:true,message:msg,onConfirm:()=>{setConfirmState({open:false});fn();}});}
  async function doSearch(q){if(!q.trim()){setSearchResults(null);return;}setSearching(true);setSearchResults([]);try{const r=await api.searchKnowledge(q);setSearchResults(r||[]);}catch(e){console.error('search failed:',e);setSearchResults([]);}finally{setSearching(false);}}
- async function removeSnippet(source){customConfirm('确认删除这条记录？',async()=>{try{await api.deleteSnippet(source);await refresh();if(searchResults)doSearch(searchQ);}catch{}});}
- async function saveSnippetTitle(oldSource){setEditingSource(null);if(editValue.trim()&&editValue!==oldSource){try{await api.renameSnippet(oldSource,editValue.trim());await refresh();}catch{}}}
- async function changeCategory(source,cat){try{await api.updateCategory(source,cat||null);await refresh();}catch{}}
+ async function removeSnippet(id){customConfirm('确认删除这条记录？',async()=>{try{await api.deleteSnippet(id);await refresh();if(searchResults)doSearch(searchQ);}catch{}});}
+ async function saveSnippetTitle(id){setEditingId(null);if(editValue.trim()){try{await api.renameSnippet(id,editValue.trim());await refresh();}catch{}}}
+ async function changeCategory(id,cat){try{await api.updateCategory(id,cat||null);await refresh();}catch{}}
+ const inSearch=searchResults!==null;
  return <section className="snippets-view"><div className="snippets-layout">
   <aside className="snippets-sidebar">
-   <button className={selectedCat===null&&!searchResults?'selected':''} onClick={()=>{setSelectedCat(null);setSearchResults(null);}}>全部</button>
-   {categories.map(cat=><button key={cat} className={selectedCat===cat&&!searchResults?'selected':''} onClick={()=>{setSelectedCat(cat);setSearchResults(null);}}>{cat}</button>)}
-   {snippets.some(s=>!s.category)&&<button className={selectedCat==='__uncat'&&!searchResults?'selected':''} onClick={()=>{setSelectedCat('__uncat');setSearchResults(null);}}>未分类</button>}
+   <button className={selectedCat===null&&!inSearch?'selected':''} onClick={()=>{setSelectedCat(null);setSearchResults(null);}}>全部</button>
+   {categories.map(cat=><button key={cat} className={selectedCat===cat&&!inSearch?'selected':''} onClick={()=>{setSelectedCat(cat);setSearchResults(null);}}>{cat}</button>)}
+   {snippets.some(s=>!s.category)&&<button className={selectedCat==='__uncat'&&!inSearch?'selected':''} onClick={()=>{setSelectedCat('__uncat');setSearchResults(null);}}>未分类</button>}
   </aside>
   <div className="snippets-main">
    <div className="snippets-search"><input value={searchQ} onChange={e=>{setSearchQ(e.target.value);if(!e.target.value.trim())setSearchResults(null);}} onKeyDown={e=>{if(e.key==='Enter')doSearch(searchQ);}} placeholder="想找点什么？问问团子…"/><button onClick={()=>doSearch(searchQ)}><Icon name="spark" size={16}/>搜一下</button></div>
-   {loading?<p className="muted">加载中…</p>:searching?<div className="search-loading"><div className="search-loading-dango"><Dango motion={false}/></div><p className="muted">搜索中…</p></div>:(filtered.length===0?<div className="cal-empty"><Dango sleep/><h3>{searchResults!==null?'没搜到相关记录。':'还没有随手记。'}</h3><p>{searchResults!==null?'换个关键词试试。':'去「和团子聊聊」跟团子说"存一下"+内容。'}</p></div>:
-    <div className="snippets-list">{filtered.map(s=><div className="snippet-card" key={s.source}>
-     <div className="snippet-card-header">{editingSource===s.source?<input className="snippet-edit" value={editValue} onChange={e=>setEditValue(e.target.value)} onBlur={()=>saveSnippetTitle(s.source)} onKeyDown={e=>{if(e.key==='Enter')saveSnippetTitle(s.source);}} autoFocus/>:<strong onClick={()=>{setEditingSource(s.source);setEditValue(s.source);}}>{s.source}</strong>}<select value={s.category||''} onChange={e=>changeCategory(s.source,e.target.value)}><option value="">未分类</option>{categories.map(cat=><option key={cat} value={cat}>{cat}</option>)}</select><button className="task-delete" onClick={()=>removeSnippet(s.source)}><Icon name="close" size={14}/></button></div>
-     <p className="snippet-content">{s.content}</p>
-    </div>)}</div>)}
+   {loading?<p className="muted">加载中…</p>:searching?<div className="search-loading"><div className="search-loading-dango"><Dango motion={false}/></div><p className="muted">搜索中…</p></div>:(filtered.length===0?<div className="cal-empty"><Dango sleep/><h3>{inSearch?'没搜到相关记录。':'还没有随手记。'}</h3><p>{inSearch?'换个关键词试试。':'去「和团子聊聊」跟团子说"存一下"+内容。'}</p></div>:
+    <div className="snippets-list">{filtered.map(s=>{
+     const id=s.id??s.snippet_id,title=s.title||'(无标题)',preview=s.preview??s.content??'',isLink=s.type==='link';
+     return <div className="snippet-card" key={id} onClick={()=>onOpen&&onOpen(id)}>
+      <div className="snippet-card-header">
+       {editingId===id?<input className="snippet-edit" value={editValue} onChange={e=>setEditValue(e.target.value)} onBlur={()=>saveSnippetTitle(id)} onKeyDown={e=>{if(e.key==='Enter')saveSnippetTitle(id);}} onClick={e=>e.stopPropagation()} autoFocus/>:
+        isLink?<a href={s.url} target="_blank" rel="noreferrer" className="snippet-link-title" onClick={e=>e.stopPropagation()}>{title}<Icon name="arrow" size={13}/></a>:
+        <strong onClick={e=>{e.stopPropagation();setEditingId(id);setEditValue(title);}}>{title}</strong>}
+       {s.type&&<span className="snippet-type-badge">{isLink?'链接':'文本'}</span>}
+       {!inSearch&&<select value={s.category||''} onChange={e=>changeCategory(id,e.target.value)} onClick={e=>e.stopPropagation()}><option value="">未分类</option>{categories.map(cat=><option key={cat} value={cat}>{cat}</option>)}</select>}
+       <button className="task-delete" onClick={e=>{e.stopPropagation();removeSnippet(id);}}><Icon name="close" size={14}/></button>
+      </div>
+      <p className="snippet-content">{preview}</p>
+     </div>;
+    })}</div>)}
   </div>
  </div><ConfirmModal {...confirmState} onCancel={()=>setConfirmState({open:false})}/></section>;
+}
+function SnippetDetail({id,onBack,onDeleted}){
+ const[snip,setSnip]=useState(null);
+ const[loading,setLoading]=useState(true);
+ const[error,setError]=useState('');
+ const[editing,setEditing]=useState(false);
+ const[editValue,setEditValue]=useState('');
+ const[confirmState,setConfirmState]=useState({open:false,message:'',onConfirm:null});
+ const[refreshing,setRefreshing]=useState(false);
+ const[notice,setNotice]=useState('');
+ async function load(){setLoading(true);setError('');try{const s=await api.getSnippet(id);setSnip(s);}catch(e){setError('加载失败');}setLoading(false);}
+ useEffect(()=>{load();},[id]);
+ function customConfirm(msg,fn){setConfirmState({open:true,message:msg,onConfirm:()=>{setConfirmState({open:false});fn();}});}
+ async function saveTitle(){setEditing(false);if(editValue.trim()){try{await api.renameSnippet(id,editValue.trim());await load();}catch{}}}
+ async function changeCategory(cat){try{await api.updateCategory(id,cat||null);await load();}catch{}}
+ async function remove(){customConfirm('确认删除这条记录？',async()=>{try{await api.deleteSnippet(id);onDeleted&&onDeleted();}catch{}});}
+ async function refresh(){setRefreshing(true);setNotice('');try{const r=await api.refreshSnippet(id);if(r.ok){await load();setNotice('已重新抓取，正文约'+r.length+'字');}else{setNotice(r.error||'抓取失败');}}catch(e){setNotice(e.message||'抓取失败');}setRefreshing(false);}
+ if(loading)return <section className="snippet-detail"><p className="muted">加载中…</p></section>;
+ if(error||!snip)return <section className="snippet-detail"><div className="cal-empty"><Dango sleep/><h3>没找到这条记录。</h3><button className="secondary" onClick={onBack}>返回列表<Icon name="arrow" size={14}/></button></div></section>;
+ const isLink=snip.type==='link';
+ const catOptions=[...new Set(['学习笔记','想法','技术',snip.category].filter(Boolean))];
+ return <section className="snippet-detail">
+  <button className="text-button back" onClick={onBack}><Icon name="back" size={17}/>返回随手记</button>
+  <div className="snippet-detail-head">
+   <span className="snippet-type-badge">{isLink?'链接':'文本'}</span>
+   {editing?<input className="snippet-edit" value={editValue} onChange={e=>setEditValue(e.target.value)} onBlur={saveTitle} onKeyDown={e=>{if(e.key==='Enter')saveTitle();}} autoFocus/>:
+    isLink?<a href={snip.url} target="_blank" rel="noreferrer" className="snippet-link-title">{snip.title}<Icon name="arrow" size={14}/></a>:
+    <h2 onClick={()=>{setEditing(true);setEditValue(snip.title);}}>{snip.title}</h2>}
+   <select value={snip.category||''} onChange={e=>changeCategory(e.target.value)}><option value="">未分类</option>{catOptions.map(c=><option key={c} value={c}>{c}</option>)}</select>
+   {isLink&&<button className="text-button" onClick={refresh} disabled={refreshing}>{refreshing?'抓取中…':'重新抓取正文'}</button>}
+   <button className="task-delete" onClick={remove} aria-label="删除"><Icon name="close" size={14}/></button>
+  </div>
+  {notice&&<p className="form-error snippet-notice">{notice}</p>}
+  {snip.created_at&&<p className="muted snippet-meta">{new Date(snip.created_at).toLocaleString('zh-CN')} 存</p>}
+  <div className={`snippet-detail-body${snip.content_format==='markdown'?' markdown-body':''}`}>
+   {snip.content_format==='markdown'?
+    <span dangerouslySetInnerHTML={{__html:renderMarkdown(snip.original_content)}}/>:
+    snip.original_content}
+  </div>
+  <ConfirmModal {...confirmState} onCancel={()=>setConfirmState({open:false})}/>
+ </section>;
 }
 function PlanView({onGoCalendar}){
  const today=todayStr();
@@ -141,8 +204,8 @@ function PlanView({onGoCalendar}){
  async function doAutoSort(){const untimed=dayTasks.filter(t=>!t.time);if(untimed.length<2)return;setAutoSorting(true);try{await api.autoSort(selectedDate,untimed.map(t=>({id:t.id,title:t.title})));const r=await api.listTasks(selectedDate);setDayTasks(r||[]);}catch{}setAutoSorting(false);}
  function drop(targetId){if(!dragId||dragId===targetId)return;const ids=dayTasks.filter(t=>!t.time).map(t=>t.id);const from=ids.indexOf(dragId),to=ids.indexOf(targetId);if(from<0||to<0)return;ids.splice(from,1);ids.splice(to,0,dragId);setDragId(null);api.applyOrder(selectedDate,ids).then(()=>{api.listTasks(selectedDate).then(r=>setDayTasks(r||[]));});}
  useEffect(()=>{if(view==='info'){api.listSnippetsByDay(selectedDate).then(r=>setSnippets(r||[])).catch(()=>setSnippets([]));}},[view,selectedDate]);
- function removeSnippet(source){customConfirm('确认删除这条信息？',async()=>{try{await api.deleteSnippet(source);const r=await api.listSnippets();setSnippets(r||[]);}catch{}});}
- async function saveSnippetTitle(oldSource){setEditingSource(null);if(editValue.trim()&&editValue!==oldSource){try{await api.renameSnippet(oldSource,editValue.trim());const r=await api.listSnippets();setSnippets(r||[]);}catch{}}}
+ function removeSnippet(id){customConfirm('确认删除这条信息？',async()=>{try{await api.deleteSnippet(id);const r=await api.listSnippetsByDay(selectedDate);setSnippets(r||[]);}catch{}});}
+ async function saveSnippetTitle(id){setEditingSource(null);if(editValue.trim()){try{await api.renameSnippet(id,editValue.trim());const r=await api.listSnippetsByDay(selectedDate);setSnippets(r||[]);}catch{}}}
  function customConfirm(msg,fn){setConfirmState({open:true,message:msg,onConfirm:()=>{setConfirmState({open:false});fn();}});}
  const tabs=[['chat','全部'],['schedule','日程安排'],['info','随手记'],['microstep','微步执行']];
  return <section className="plan-view">
@@ -154,7 +217,7 @@ function PlanView({onGoCalendar}){
    {loading&&<div className="bubble-row dango"><div className="bubble-avatar"><Dango motion={false}/></div><div className="bubble bubble-dango typing">团子在想想…</div></div>}
    {error&&<p className="form-error" role="alert">{error}</p>}
    <div ref={endRef}/>
-  </div>:view==='schedule'?<div className="queue-wrap"><div className="queue-head">{dayTasks.some(t=>!t.time)&&dayTasks.length>0&&!autoSorting&&<button className="text-button" onClick={doAutoSort}>自动排序</button>}{autoSorting&&<span className="muted">排序中…</span>}</div><div className="queue-list">{dayTasks.length===0?<div className="cal-empty"><Dango sleep/><h3>{isToday?'今天还没有安排。':selectedDate+' 没有安排。'}</h3>{isToday&&<p className="muted">回「全部聊天」跟团子说要做什么。</p>}</div>:dayTasks.map((tk,i)=><div className={`task-row ${tk.time?'timed':'untimed'} ${tk.done?'done':''}`} key={tk.id} draggable={!tk.time} onDragStart={!tk.time?()=>setDragId(tk.id):undefined} onDragOver={e=>e.preventDefault()} onDrop={()=>drop(tk.id)}><span className="queue-idx">{i+1}</span><div className="task-when">{typeMark(tk)}{tk.time?<span className="time-pill"><Icon name="clock" size={11}/>{tk.time}</span>:<span className="flex-tag">灵活</span>}</div><div className="task-body"><strong>{tk.title}</strong>{conflictSet.has(tk.id)&&<span className="conflict-badge"><Icon name="close" size={11}/>时间冲突</span>}</div><button className="task-check" onClick={()=>toggle(tk.id)} aria-label={tk.done?'标记未完成':'标记完成'}><Icon name={tk.done?'check':'minus'} size={14}/></button><button className="task-delete" onClick={()=>remove(tk.id)} aria-label="删除"><Icon name="close" size={14}/></button></div>)}</div></div>:view==='info'?<div className="snippet-list">{snippets.length===0?<div className="cal-empty"><Dango sleep/><h3>还没有收集零碎信息。</h3><p className="muted">在「全部」跟团子说"存一下"+内容。</p></div>:snippets.map(s=><div className="snippet-row" key={s.source}><div className="snippet-body"><strong onClick={()=>{setEditingSource(s.source);setEditValue(s.source);}}>{s.source}</strong><small>{s.content}</small></div><button className="task-delete" onClick={()=>removeSnippet(s.source)} aria-label="删除"><Icon name="close" size={14}/></button></div>)}</div>:<div className="cal-empty"><Dango sleep/><h3>还没有微步执行记录。</h3><p className="muted">这部分功能在路上。</p></div>}
+  </div>:view==='schedule'?<div className="queue-wrap"><div className="queue-head">{dayTasks.some(t=>!t.time)&&dayTasks.length>0&&!autoSorting&&<button className="text-button" onClick={doAutoSort}>自动排序</button>}{autoSorting&&<span className="muted">排序中…</span>}</div><div className="queue-list">{dayTasks.length===0?<div className="cal-empty"><Dango sleep/><h3>{isToday?'今天还没有安排。':selectedDate+' 没有安排。'}</h3>{isToday&&<p className="muted">回「全部聊天」跟团子说要做什么。</p>}</div>:dayTasks.map((tk,i)=><div className={`task-row ${tk.time?'timed':'untimed'} ${tk.done?'done':''}`} key={tk.id} draggable={!tk.time} onDragStart={!tk.time?()=>setDragId(tk.id):undefined} onDragOver={e=>e.preventDefault()} onDrop={()=>drop(tk.id)}><span className="queue-idx">{i+1}</span><div className="task-when">{typeMark(tk)}{tk.time?<span className="time-pill"><Icon name="clock" size={11}/>{tk.time}</span>:<span className="flex-tag">灵活</span>}</div><div className="task-body"><strong>{tk.title}</strong>{conflictSet.has(tk.id)&&<span className="conflict-badge"><Icon name="close" size={11}/>时间冲突</span>}</div><button className="task-check" onClick={()=>toggle(tk.id)} aria-label={tk.done?'标记未完成':'标记完成'}><Icon name={tk.done?'check':'minus'} size={14}/></button><button className="task-delete" onClick={()=>remove(tk.id)} aria-label="删除"><Icon name="close" size={14}/></button></div>)}</div></div>:view==='info'?<div className="snippet-list">{snippets.length===0?<div className="cal-empty"><Dango sleep/><h3>还没有收集零碎信息。</h3><p className="muted">在「全部」跟团子说"存一下"+内容。</p></div>:snippets.map(s=><div className="snippet-row" key={s.id}><div className="snippet-body"><strong onClick={()=>{setEditingSource(s.id);setEditValue(s.title);}}>{s.title}</strong><small>{s.preview??s.content}</small></div><button className="task-delete" onClick={()=>removeSnippet(s.id)} aria-label="删除"><Icon name="close" size={14}/></button></div>)}</div>:<div className="cal-empty"><Dango sleep/><h3>还没有微步执行记录。</h3><p className="muted">这部分功能在路上。</p></div>}
   {view==='chat'&&created.length>0&&!loading&&<div className="when-plan"><div className="when-head"><span className="when-layer">✓ 已加入日历</span><div className="when-actions"><button className="text-button" onClick={()=>onGoCalendar&&onGoCalendar()}>去日历<Icon name="arrow" size={14}/></button><button className="text-button" onClick={reset}>再说一句</button></div></div><ul className="when-list">{created.map((t,i)=><li key={i}><span className="when-time">{t.recurrence?'↻ '+freqLabel(t.recurrence):(t.time||'灵活')}</span><span className="when-item">{t.title}</span></li>)}</ul></div>}
   {view==='chat'&&isToday&&<form className="chat-input" onSubmit={e=>{e.preventDefault();send(input);}}>
    <textarea value={input} onChange={e=>setInput(e.target.value)} placeholder={lastIsUser?'团子还在想…':'和团子说，或者贴点东西给它…'} rows={2} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send(input);}}}/>

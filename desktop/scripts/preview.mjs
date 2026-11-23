@@ -24,5 +24,9 @@ createServer(async(req,res)=>{
   const file=path.resolve(folder,'.'+(name==='/'?'/index.html':decodeURIComponent(name)));
   if(!file.startsWith(folder+path.sep)){res.writeHead(403).end();return;}
   try{const data=await readFile(file);res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream','Cache-Control':'no-store'});res.end(data);}
-  catch{res.writeHead(404).end('Not found');}
+  catch{
+    // SPA fallback: non-file routes (no extension) serve index.html
+    if(!name.includes('.')){try{const data=await readFile(path.join(folder,'index.html'));res.writeHead(200,{'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store'});res.end(data);return;}catch{}}
+    res.writeHead(404).end('Not found');
+  }
 }).listen(port,'127.0.0.1',()=>console.log(`Tada preview: http://127.0.0.1:${port}\nBuild preserved: ${folder}`));

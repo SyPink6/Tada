@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
@@ -13,16 +14,31 @@ def now() -> datetime:
     return datetime.utcnow()
 
 
+class Snippet(Base):
+    __tablename__ = "snippets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    type: Mapped[str] = mapped_column(String(20), default="text")  # text/link (image/file later)
+    title: Mapped[str] = mapped_column(String(256))
+    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    original_content: Mapped[Optional[str]] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"), nullable=True)
+    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    content_format: Mapped[str] = mapped_column(String(20), default="text")  # text/markdown
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+
+
 class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    source: Mapped[str] = mapped_column(String(256), index=True)
+    snippet_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("snippets.id"), index=True, nullable=True)
     source_index: Mapped[int] = mapped_column(Integer)
     content: Mapped[str] = mapped_column(Text)
     embedding_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    # NOTE: legacy `source` (VARCHAR 256) and `category` (VARCHAR 100) columns remain
+    # in the DB (made nullable by the migration) but are no longer declared here —
+    # SQLAlchemy 2.0 ignores undeclared columns. All grouping is via snippet_id.
 
 
 class Task(Base):

@@ -95,8 +95,8 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name": "save_snippet",
-            "description": "把文字/链接存进知识库（之后可被 search_knowledge 检索）。",
-            "parameters": {"type": "object", "properties": {"content": {"type": "string", "description": "要存的内容（文字或 URL）"}, "type": {"type": "string", "enum": ["text", "link"]}, "title": {"type": "string", "description": "标题，≤20字，总结内容大意"}, "category": {"type": "string", "description": "可选类别（如'学习笔记'、'想法'、'技术'）"}}, "required": ["content", "type", "title"]},
+            "description": "把文字/链接存进知识库（之后可被 search_knowledge 检索）。type=link 时会自动抓取网页正文入库。",
+            "parameters": {"type": "object", "properties": {"content": {"type": "string", "description": "要存的内容（文字或 URL）"}, "type": {"type": "string", "enum": ["text", "link"], "description": "text=普通文字；link=网页链接（会自动抓正文）"}, "title": {"type": "string", "description": "标题，10-20字，总结内容大意"}, "category": {"type": "string", "description": "可选类别（如'学习笔记'、'想法'、'技术'）"}}, "required": ["content", "type", "title"]},
         },
     },
     {
@@ -111,8 +111,8 @@ TOOL_DEFS = [
         "type": "function",
         "function": {
             "name": "delete_snippet",
-            "description": "删除知识库一条片段（按 source）。",
-            "parameters": {"type": "object", "properties": {"source": {"type": "string", "description": "片段来源/标题"}}, "required": ["source"]},
+            "description": "删除知识库一条片段（按 id）。",
+            "parameters": {"type": "object", "properties": {"id": {"type": "integer", "description": "片段 id（来自 list_snippets）"}}, "required": ["id"]},
         },
     },
     {
@@ -121,6 +121,14 @@ TOOL_DEFS = [
             "name": "search_knowledge",
             "description": "向量+BM25 混合检索知识库，返回最相关的片段。",
             "parameters": {"type": "object", "properties": {"query": {"type": "string"}, "top_k": {"type": "integer"}}, "required": ["query"]},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_url",
+            "description": "抓取一个网页链接的正文并返回给你（不存进知识库）。用于用户想让你读一下/总结/概括某个链接时。",
+            "parameters": {"type": "object", "properties": {"url": {"type": "string", "description": "要阅读的网页 URL（http/https）"}}, "required": ["url"]},
         },
     },
 ]

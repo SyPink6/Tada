@@ -8,7 +8,7 @@ from app.services.agent import AgentService
 from app.services.knowledge import KnowledgeService
 from app.services.tasks import TaskService
 from app.services.vector_store import ChromaKnowledgeStore
-from app.models.entities import DailyLog, KnowledgeChunk
+from app.models.entities import DailyLog, KnowledgeChunk, Snippet
 
 router = APIRouter()
 settings = get_settings()
@@ -20,8 +20,11 @@ class EmbedRequest(BaseModel):
     text: str
 
 class IngestRequest(BaseModel):
-    source: str
+    title: str
     content: str
+    type: str = "text"
+    category: str | None = None
+    url: str | None = None
 
 class SearchRequest(BaseModel):
     query: str
@@ -48,15 +51,24 @@ def embed(req: EmbedRequest):
 
 @router.post("/api/knowledge/ingest")
 def ingest(req: IngestRequest, db: Session = Depends(get_db)):
+    snip = Snippet(type=req.type, title=req.title[:256], url=req.url,
+                   original_content=req.content, category=req.category)
+    db.add(snip)
+    db.flush()
     svc = KnowledgeService(db, settings)
-    count = svc.ingest(req.source, req.content)
-    return {"chunks": count}
+    count = svc.ingest(snip.id, req.content)
+    return {"id": snip.id, "chunks": count}
 
 @router.post("/api/knowledge/search")
 def search(req: SearchRequest, db: Session = Depends(get_db)):
     svc = KnowledgeService(db, settings)
     results = svc.retrieve(req.query, req.top_k)
-    return {"results": [{"source": r.source, "content": r.content, "score": r.score} for r in results]}
+    out = []
+    for r in results:
+        snip = db.get(Snippet, r.snippet_id) if r.snippet_id is not None else None
+        out.append({"snippet_id": r.snippet_id, "title": snip.title if snip else "",
+                    "content": r.content, "score": r.score})
+    return {"results": out}
 
 
 # --- Tasks ---
@@ -157,20 +169,20 @@ def _task_dict(svc, t):
 
 @router.get("/api/knowledge/list")
 def knowledge_list(db: Session = Depends(get_db)):
-    rows = db.query(KnowledgeChunk.source).distinct().all()
-    snippets = []
-    for (source,) in rows:
-        first = db.query(KnowledgeChunk).filter(KnowledgeChunk.source == source).order_by(KnowledgeChunk.source_index).first()
-        snippets.append({"source": source, "content": (first.content[:500] if first else ""), "category": first.category if first else None})
-    return {"snippets": snippets}
+    rows = db.query(Snippet).order_by(Snippet.created_at.desc()).all()
+    return {"snippets": [
+        {"id": s.id, "title": s.title, "type": s.type, "category": s.category,
+         "url": s.url, "preview": (s.original_content or "")[:200]}
+        for s in rows
+    ]}
 
 class UpdateCategoryRequest(BaseModel):
-    source: str
+    id: int
     category: str | None = None
 
 @router.post("/api/knowledge/category")
 def knowledge_category(req: UpdateCategoryRequest, db: Session = Depends(get_db)):
-    db.query(KnowledgeChunk).filter(KnowledgeChunk.source == req.source).update({KnowledgeChunk.category: req.category})
+    db.query(Snippet).filter(Snippet.id == req.id).update({Snippet.category: req.category})
     db.commit()
     return {"ok": True}
 
@@ -179,52 +191,93 @@ def knowledge_search(q: str, db: Session = Depends(get_db)):
     svc = KnowledgeService(db, settings)
     results = svc.retrieve(q, 5)
     filtered = [r for r in results if r.score > 0.05]
-    return {"results": [{"source": r.source, "content": r.content[:300], "score": round(r.score, 3)} for r in filtered]}
+    out = []
+    for r in filtered:
+        snip = db.get(Snippet, r.snippet_id) if r.snippet_id is not None else None
+        out.append({"snippet_id": r.snippet_id, "title": snip.title if snip else "",
+                    "content": r.content[:300], "score": round(r.score, 3)})
+    return {"results": out}
 
 @router.get("/api/knowledge/by-day")
 def knowledge_by_day(date: str, db: Session = Depends(get_db)):
-    entries = db.query(DailyLog).filter(DailyLog.date == date, DailyLog.entry_type == "snippet_saved").order_by(DailyLog.id).all()
+    entries = db.query(DailyLog).filter(
+        DailyLog.date == date, DailyLog.entry_type == "snippet_saved"
+    ).order_by(DailyLog.id).all()
     snippets = []
     for e in entries:
-        first = db.query(KnowledgeChunk).filter(KnowledgeChunk.source == e.content).order_by(KnowledgeChunk.source_index).first()
-        if first:
-            snippets.append({"source": e.content, "content": first.content[:500], "category": first.category})
+        # content holds the snippet id (string) after migration; skip old title strings
+        if not (e.content or "").isdigit():
+            continue
+        s = db.get(Snippet, int(e.content))
+        if s:
+            snippets.append({"id": s.id, "title": s.title, "type": s.type,
+                             "category": s.category, "preview": (s.original_content or "")[:200]})
     return {"snippets": snippets}
 
+@router.get("/api/knowledge/{snippet_id}")
+def knowledge_detail(snippet_id: int, db: Session = Depends(get_db)):
+    s = db.get(Snippet, snippet_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="snippet not found")
+    return {"id": s.id, "type": s.type, "title": s.title, "url": s.url,
+            "original_content": s.original_content, "category": s.category,
+            "content_format": s.content_format,
+            "created_at": s.created_at.isoformat() if s.created_at else None}
+
 class DeleteSnippetRequest(BaseModel):
-    source: str
+    id: int
 
 @router.post("/api/knowledge/delete")
 def knowledge_delete(req: DeleteSnippetRequest, db: Session = Depends(get_db)):
     svc = KnowledgeService(db, settings)
-    svc._delete_vector_source(req.source)
-    db.query(KnowledgeChunk).filter(KnowledgeChunk.source == req.source).delete()
+    svc._delete_snippet_chunks(req.id)
+    db.query(KnowledgeChunk).filter(KnowledgeChunk.snippet_id == req.id).delete()
+    db.query(Snippet).filter(Snippet.id == req.id).delete()
     db.commit()
     return {"ok": True}
 
 
 class RenameSnippetRequest(BaseModel):
-    old_source: str
-    new_source: str
+    id: int
+    title: str
 
 @router.post("/api/knowledge/rename")
 def knowledge_rename(req: RenameSnippetRequest, db: Session = Depends(get_db)):
-    rows = db.query(KnowledgeChunk).filter(KnowledgeChunk.source == req.old_source).all()
-    if not rows:
+    s = db.get(Snippet, req.id)
+    if not s:
         raise HTTPException(status_code=404, detail="snippet not found")
-    svc = KnowledgeService(db, settings)
-    try:
-        svc._delete_vector_source(req.old_source)
-    except Exception:
-        pass
-    for row in rows:
-        row.source = req.new_source[:256]
+    s.title = req.title[:256]
     db.commit()
-    try:
-        svc._index_vector_chunks(rows)
-    except Exception:
-        pass
     return {"ok": True}
+
+
+class RefreshSnippetRequest(BaseModel):
+    id: int
+
+@router.post("/api/knowledge/refresh")
+def knowledge_refresh(req: RefreshSnippetRequest, db: Session = Depends(get_db)):
+    """Re-fetch a link snippet's URL and overwrite original_content + search chunks.
+    Fixes lossy migrated content (overlap duplication, flattened code, old prefix)."""
+    from app.services.fetcher import fetch_url
+    s = db.get(Snippet, req.id)
+    if not s:
+        raise HTTPException(status_code=404, detail="snippet not found")
+    if s.type != "link" or not s.url:
+        raise HTTPException(status_code=400, detail="只有链接类型可以重新抓取")
+    fetched = fetch_url(s.url)
+    if not fetched.get("ok") or not fetched.get("text"):
+        return {"ok": False, "error": fetched.get("error", "抓取失败")}
+    text = fetched["text"]
+    if len(text.strip()) < 80:
+        return {"ok": False, "error": "抓到的正文太短（可能是 JS 渲染页），未更新"}
+    s.original_content = text
+    s.content_format = fetched.get("content_format", "text")
+    # refresh title from the page only if the current one is an auto-fallback
+    if fetched.get("title") and (not s.title or s.title.startswith("snippet-")):
+        s.title = fetched["title"].strip()[:256]
+    svc = KnowledgeService(db, settings)
+    chunks = svc.ingest(s.id, text)  # deletes old chunks + re-indexes, commits
+    return {"ok": True, "title": s.title, "length": len(text), "chunks": chunks}
 
 
 # --- Agent (chat) ---
